@@ -116,9 +116,6 @@ components.view()
 ica.plot_components()
 
 #%%
-print(labels[37])
-
-#%%
 # Apply ICA to preprocessed data
 epochs_ica = epochs.copy()
 ica.apply(epochs_ica)
