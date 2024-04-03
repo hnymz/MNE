@@ -3,6 +3,7 @@ import numpy as np
 import mne
 from mne_icalabel.gui import label_ica_components
 from mne_icalabel import label_components
+import matplotlib.pyplot as plt
 
 #%%
 # Define the file directory where you saved the data
@@ -30,9 +31,7 @@ print(events)
 
 # Re-reference data to average of all electrodes (default)
 raw.set_eeg_reference(ref_channels = "average")
-#raw.plot()
 
-#%%
 # Bandpass filter
 filt_raw = raw.copy()
 filt_raw.load_data().filter(l_freq = 1, h_freq = 100)
@@ -60,7 +59,7 @@ filt_raw.set_montage(montage)
 filt_raw.plot_sensors()
 # If bad channels are not near the edge, they need to be interpolated
 # Otherwise, better remove them directly and apply another re-reference
-filt_raw.set_eeg_reference(ref_channels = "average")
+#filt_raw.set_eeg_reference(ref_channels = "average")
 
 #%%
 # Epoching
@@ -111,21 +110,67 @@ print(f"Excluding these ICA components: {exclude_idx}")
 #ica.plot_sources(epochs)
 
 ica.exclude = exclude_idx
-components = ica.get_components()
-components.view()
 ica.plot_components()
 
 #%%
-# Apply ICA to preprocessed data
+# Apply ICA to preprocessed epoched data
 epochs_ica = epochs.copy()
 ica.apply(epochs_ica)
-epochs_ica.plot(events=True, event_id=event_id)
 
-#%%
 # Baseline correction
 baseline = (None, 0)
 trad_low = epochs_ica["low_freq_gabor"].average().apply_baseline(baseline)
 trad_high = epochs_ica["high_freq_gabor"].average().apply_baseline(baseline)
 epochs_ica.plot(events=True, event_id=event_id)
+
+# Save the preprocessed file
+file_name = "C:/Users/ausra/Desktop/internship/data_analysis/preprocessing/preprocessed_data_epo.fif"
+epochs_ica.save(file_name, overwrite = True)
+
+#%%
+# Get the EEG data from the epochs
+# The resulting 3D array have 3 dimensions representing epochs, channels, and time points in each epoch
+data = epochs_ica.get_data()
+print("Shape of data:", data.shape)
+
+#%%
+# Calculate SVD using trial-averaged EEG data
+averaged_data = np.mean(data, axis=0)
+# The above line can be replaced by: evoked = epochs_ica.average() to average data on all trials
+averaged_data = np.transpose(averaged_data) # T * C matrix of trial-averaged EEG
+U, s, V = np.linalg.svd(averaged_data, full_matrices=False)
+
+def perexp(s):
+    pexp = np.square(s) / float(np.sum(np.square(s)))
+    return pexp
+# Print the percentage of variance explained by the first component
+print(perexp(s)[0])
+
+first_component = V[0, :] # C * 1 matrix of the first right singular vector
+
+#%%
+# Apply SVD weights to EEG data in every trial
+for trial in range(110, 111): # data.shape[0]
+    trial_data = np.transpose(data[trial, :, :]) # T * C matrix of EEG data in every trial
+    weighted_trial_data = np.tensordot(trial_data, first_component, axes=(1, 0)) # T * 1 matrix
+
+indices = np.arange(weighted_trial_data.shape[0])
+window_size = 50
+smoothed_values = np.convolve(weighted_trial_data*1000000, np.ones(window_size)/window_size, mode='valid')
+adjusted_indices = indices[(window_size//2):-(window_size//2) + 1]
+
+plt.figure(figsize=(8, 6))
+plt.plot(adjusted_indices, smoothed_values)
+plt.xlabel('Time (ms)', fontsize=16)
+plt.ylabel('SVD weighted single-trial potential (μV)', fontsize=16)
+new_xticks = np.arange(-200, 2001, 200)
+old_xticks = np.linspace(0, 4507, num=len(new_xticks))
+plt.xticks(old_xticks, new_xticks, fontsize=14)
+plt.yticks(fontsize=14)
+for i, xtick in enumerate(new_xticks):
+    if xtick == 0:
+        plt.axvline(x=old_xticks[i], color='red') 
+        plt.text(old_xticks[i] + 50, np.max(smoothed_values), 'Onset of stimuli', color='red', fontsize=12, rotation=0, verticalalignment='bottom')
+plt.show()
 
 
